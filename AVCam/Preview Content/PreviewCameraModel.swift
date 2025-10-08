@@ -49,6 +49,12 @@ class PreviewCameraModel: Camera {
 
     var error: Error?
 
+    /// The state machine managing camera session state (stub for previews)
+    let sessionState = CameraSessionState()
+
+    /// Visual feedback system for user-facing messages (stub for previews)
+    let feedback = CameraFeedback()
+
     init(captureMode: CaptureMode = .photo, status: CameraStatus = .unknown) {
         self.captureMode = captureMode
         self.status = status

@@ -38,6 +38,12 @@ protocol Camera: AnyObject, SendableMetatype {
     /// A Boolean value indicating if running on simulator (multi-cam not supported on simulator).
     var isRunningOnSimulator: Bool { get }
 
+    /// The state machine managing camera session state
+    var sessionState: CameraSessionState { get }
+
+    /// Visual feedback system for user-facing messages
+    var feedback: CameraFeedback { get }
+
     /// Explicitly enable/disable dual (multi-camera) mode if supported.
     func enableMultiCam() async -> Bool
     func disableMultiCam() async

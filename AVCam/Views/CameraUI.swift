@@ -46,6 +46,15 @@ struct CameraUI<CameraModel: Camera>: PlatformView {
         .overlay {
             StatusOverlayView(status: camera.status)
         }
+        .overlay(alignment: .bottom) {
+            // Feedback banner
+            if camera.feedback.isVisible, let message = camera.feedback.message {
+                FeedbackBanner(message: message, type: camera.feedback.type)
+                    .padding(.bottom, 120)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.spring(response: 0.3), value: camera.feedback.isVisible)
+            }
+        }
         .overlay(alignment: .bottomLeading) {
             // Debug info overlay
             DebugInfoView(camera: camera)
@@ -162,11 +171,27 @@ private struct DebugInfoView<CameraModel: Camera>: View {
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 2) {
+                    Text("State: \(camera.sessionState.current.description)")
+                        .foregroundColor(camera.sessionState.isDualCameraActive ? .green : .white)
                     Text("Multi-Cam: \(camera.isMultiCamActive ? "✅ Active" : "❌ Inactive")")
                     Text("Supported: \(camera.isMultiCamSupported ? "✅ Yes" : "❌ No")")
                     Text("Simulator: \(camera.isRunningOnSimulator ? "⚠️ Yes" : "✅ No")")
                     Text("Mode: \(camera.captureMode == .video ? "📹 Video" : "📷 Photo")")
                     Text("Layout: \(camera.multiCamLayout == .grid ? "Grid" : "PiP")")
+
+                    if camera.sessionState.isTransitioning {
+                        Divider()
+                        Text("⏳ Transitioning...")
+                            .foregroundColor(.yellow)
+                            .font(.caption2)
+                    }
+
+                    if camera.sessionState.hasError {
+                        Divider()
+                        Text("❌ \(camera.sessionState.current.description)")
+                            .foregroundColor(.red)
+                            .font(.caption2)
+                    }
 
                     if let error = camera.error {
                         Divider()

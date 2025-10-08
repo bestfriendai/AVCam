@@ -49,6 +49,12 @@ final class CameraModel: Camera {
     /// An error that indicates the details of an error during photo or movie capture.
     private(set) var error: Error?
 
+    /// The state machine managing camera session state
+    let sessionState = CameraSessionState()
+
+    /// Visual feedback system for user-facing messages
+    let feedback = CameraFeedback()
+
     /// An object that provides the connection between the capture session and the video preview layer.
     var previewSource: PreviewSource { captureService.previewSource }
 
@@ -147,6 +153,7 @@ final class CameraModel: Camera {
         // Verify that the person authorizes the app to use device cameras and microphones.
         guard await captureService.isAuthorized else {
             status = .unauthorized
+            sessionState.setError(.permissionDenied)
             return
         }
         do {
@@ -156,9 +163,24 @@ final class CameraModel: Camera {
             try await captureService.start(with: cameraState)
             observeState()
             status = .running
+
+            // Auto-enable dual camera mode if supported and in video mode
+            if isMultiCamSupported && captureMode == .video && !isRunningOnSimulator {
+                logger.info("Auto-enabling dual camera mode (default behavior)")
+                feedback.info("Initializing dual camera mode...")
+
+                let success = await enableMultiCam()
+                if success {
+                    feedback.success("Dual camera mode active", duration: 2.0)
+                } else {
+                    logger.warning("Auto dual-mode failed, using single camera")
+                    feedback.warning("Using single camera mode", duration: 2.0)
+                }
+            }
         } catch {
             logger.error("Failed to start capture service. \(error)")
             status = .failed
+            sessionState.setError(.sessionConfigurationFailed(underlying: error))
         }
     }
 
@@ -206,13 +228,63 @@ final class CameraModel: Camera {
     @MainActor
     func enableMultiCam() async -> Bool {
         logger.info("User requested dual camera mode")
+
+        // Show transitioning state
+        sessionState.beginTransition(
+            from: sessionState.current,
+            to: .dualCamera(
+                primary: CameraSessionState.CameraDevice(
+                    position: .back,
+                    modelID: "Unknown",
+                    localizedName: "Rear Camera"
+                ),
+                secondary: CameraSessionState.CameraDevice(
+                    position: .front,
+                    modelID: "Unknown",
+                    localizedName: "Front Camera"
+                )
+            ),
+            progress: "Configuring dual camera..."
+        )
+
+        feedback.info("Enabling dual camera mode...")
+
         let success = await captureService.enableMultiCam()
         if success {
             // Default to grid layout for multi-cam as per user preference
             multiCamLayout = .grid
             logger.info("✅ Dual camera mode enabled successfully with grid layout")
+
+            // Update state to dual camera
+            sessionState.completeTransition(to: .dualCamera(
+                primary: CameraSessionState.CameraDevice(
+                    position: .back,
+                    modelID: "Rear",
+                    localizedName: "Rear Camera"
+                ),
+                secondary: CameraSessionState.CameraDevice(
+                    position: .front,
+                    modelID: "Front",
+                    localizedName: "Front Camera"
+                )
+            ))
+
+            feedback.success("Dual camera mode enabled", duration: 2.0)
         } else {
             logger.error("❌ Failed to enable dual camera mode - check device compatibility and console logs")
+
+            // Set error state
+            let cameraError = CameraSessionError.sessionConfigurationFailed(
+                underlying: NSError(
+                    domain: "com.apple.AVCam",
+                    code: -1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Dual camera mode failed to activate"
+                    ]
+                )
+            )
+            sessionState.setError(cameraError)
+
             // Set error for UI feedback
             error = NSError(
                 domain: "com.apple.AVCam",
@@ -222,6 +294,8 @@ final class CameraModel: Camera {
                     NSLocalizedRecoverySuggestionErrorKey: "This may be due to device limitations, thermal throttling, or incompatible camera formats. Check console logs for details."
                 ]
             )
+
+            feedback.error("Failed to enable dual camera mode", duration: 5.0)
         }
         return success
     }
@@ -229,7 +303,21 @@ final class CameraModel: Camera {
     /// Explicitly disable dual (multi-camera) mode and return to single camera.
     @MainActor
     func disableMultiCam() async {
+        logger.info("Disabling dual camera mode")
+        feedback.info("Switching to single camera...")
+
         await captureService.disableMultiCam()
+
+        // Update state to single camera
+        sessionState.transition(to: .singleCamera(
+            device: CameraSessionState.CameraDevice(
+                position: .back,
+                modelID: "Rear",
+                localizedName: "Rear Camera"
+            )
+        ))
+
+        feedback.success("Single camera mode", duration: 2.0)
     }
 
     /// Sets the rear camera zoom to a specific preset value.
