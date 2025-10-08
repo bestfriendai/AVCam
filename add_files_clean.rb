@@ -16,7 +16,7 @@ model_group = project.main_group.find_subpath('AVCam/Model')
 raise "Model group not found" unless model_group
 
 # Files to add
-files_to_add = ['CameraSessionState.swift', 'CameraFeedback.swift']
+files_to_add = ['CameraSessionState.swift', 'CameraFeedback.swift', 'VideoMerger.swift']
 
 files_to_add.each do |filename|
   puts "\nProcessing #{filename}..."

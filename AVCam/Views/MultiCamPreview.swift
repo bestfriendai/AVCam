@@ -175,10 +175,11 @@ final class MultiCamPreviewView: UIView {
             primaryLayer?.frame = bounds
             return
         }
-        
+
         let halfHeight = bounds.height / 2
-        primaryLayer?.frame = CGRect(x: 0, y: 0, width: bounds.width, height: halfHeight)
-        secondaryLayer.frame = CGRect(x: 0, y: halfHeight, width: bounds.width, height: halfHeight)
+        // Front camera (secondary) at TOP, Back camera (primary) at BOTTOM
+        secondaryLayer.frame = CGRect(x: 0, y: 0, width: bounds.width, height: halfHeight)
+        primaryLayer?.frame = CGRect(x: 0, y: halfHeight, width: bounds.width, height: halfHeight)
     }
     
     private func layoutCustom() {

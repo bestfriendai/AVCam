@@ -8,10 +8,13 @@ An object that writes photos and movies to the user's Photos library.
 import Foundation
 import Photos
 import UIKit
+import os.log
 
 /// An object that writes photos and movies to the user's Photos library.
 actor MediaLibrary {
-    
+
+    private let logger = Logger(subsystem: "com.apple.AVCam", category: "MediaLibrary")
+
     // Errors that media library can throw.
     enum Error: Swift.Error {
         case unauthorized
@@ -75,14 +78,76 @@ actor MediaLibrary {
     /// Saves a movie to the Photos library.
     func save(movie: Movie) async throws {
         let location = try await currentLocation
-        for url in movie.allURLs {
+
+        // If this is a multi-cam recording with both videos, create merged version
+        if let companionURL = movie.companionURL {
+            logger.info("Multi-cam recording detected - creating merged video")
+
+            // Save individual videos first
+            logger.info("Saving front camera video...")
             try await performChange {
                 let options = PHAssetResourceCreationOptions()
-                options.shouldMoveFile = true
+                options.shouldMoveFile = false // Don't move yet, we need it for merging
                 let creationRequest = PHAssetCreationRequest.forAsset()
-                creationRequest.addResource(with: .video, fileURL: url, options: options)
+                creationRequest.addResource(with: .video, fileURL: companionURL, options: options)
                 creationRequest.location = location
                 return creationRequest.placeholderForCreatedAsset
+            }
+
+            logger.info("Saving back camera video...")
+            try await performChange {
+                let options = PHAssetResourceCreationOptions()
+                options.shouldMoveFile = false // Don't move yet, we need it for merging
+                let creationRequest = PHAssetCreationRequest.forAsset()
+                creationRequest.addResource(with: .video, fileURL: movie.url, options: options)
+                creationRequest.location = location
+                return creationRequest.placeholderForCreatedAsset
+            }
+
+            // Create and save merged video (front top, back bottom)
+            logger.info("Creating merged video (front top + back bottom)...")
+            let mergedURL = movie.url.deletingLastPathComponent()
+                .appendingPathComponent("merged_\(UUID().uuidString).mov")
+
+            do {
+                let videoMerger = VideoMerger()
+                let finalURL = try await videoMerger.mergeVideosVertically(
+                    topVideoURL: companionURL,      // Front camera at top
+                    bottomVideoURL: movie.url,       // Back camera at bottom
+                    outputURL: mergedURL
+                )
+
+                logger.info("Saving merged video...")
+                try await performChange {
+                    let options = PHAssetResourceCreationOptions()
+                    options.shouldMoveFile = true
+                    let creationRequest = PHAssetCreationRequest.forAsset()
+                    creationRequest.addResource(with: .video, fileURL: finalURL, options: options)
+                    creationRequest.location = location
+                    return creationRequest.placeholderForCreatedAsset
+                }
+
+                logger.info("✅ Saved 3 videos: front, back, and merged")
+
+                // Clean up original files
+                try? FileManager.default.removeItem(at: movie.url)
+                try? FileManager.default.removeItem(at: companionURL)
+
+            } catch {
+                logger.error("Failed to create merged video: \(error.localizedDescription)")
+                // Continue anyway - at least we have the individual videos
+            }
+        } else {
+            // Single camera recording - save normally
+            for url in movie.allURLs {
+                try await performChange {
+                    let options = PHAssetResourceCreationOptions()
+                    options.shouldMoveFile = true
+                    let creationRequest = PHAssetCreationRequest.forAsset()
+                    creationRequest.addResource(with: .video, fileURL: url, options: options)
+                    creationRequest.location = location
+                    return creationRequest.placeholderForCreatedAsset
+                }
             }
         }
     }
