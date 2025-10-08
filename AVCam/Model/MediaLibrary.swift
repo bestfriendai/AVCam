@@ -81,11 +81,12 @@ actor MediaLibrary {
 
         // If this is a multi-cam recording with both videos, create merged version
         if let companionURL = movie.companionURL {
-            logger.info("Multi-cam recording detected - creating merged video")
+            logger.info("Multi-cam recording detected - saving videos")
 
-            // Save individual videos first
-            logger.info("Saving front camera video...")
-            try await performChange {
+            // Save individual videos in PARALLEL for speed
+            logger.info("Saving front and back camera videos in parallel...")
+
+            async let frontSave: Void = performChange {
                 let options = PHAssetResourceCreationOptions()
                 options.shouldMoveFile = false // Don't move yet, we need it for merging
                 let creationRequest = PHAssetCreationRequest.forAsset()
@@ -94,8 +95,7 @@ actor MediaLibrary {
                 return creationRequest.placeholderForCreatedAsset
             }
 
-            logger.info("Saving back camera video...")
-            try await performChange {
+            async let backSave: Void = performChange {
                 let options = PHAssetResourceCreationOptions()
                 options.shouldMoveFile = false // Don't move yet, we need it for merging
                 let creationRequest = PHAssetCreationRequest.forAsset()
@@ -104,39 +104,58 @@ actor MediaLibrary {
                 return creationRequest.placeholderForCreatedAsset
             }
 
-            // Create and save merged video (front top, back bottom)
-            logger.info("Creating merged video (front top + back bottom)...")
+            // Wait for both to complete
+            _ = try await (frontSave, backSave)
+            logger.info("✅ Individual videos saved")
+
+            // Create merged video in BACKGROUND - don't block the UI
+            // User gets control back immediately while merge happens in background
             let mergedURL = movie.url.deletingLastPathComponent()
                 .appendingPathComponent("merged_\(UUID().uuidString).mov")
 
-            do {
-                let videoMerger = VideoMerger()
-                let finalURL = try await videoMerger.mergeVideosVertically(
-                    topVideoURL: companionURL,      // Front camera at top
-                    bottomVideoURL: movie.url,       // Back camera at bottom
-                    outputURL: mergedURL
-                )
+            // Detached task runs independently and won't block the save() return
+            Task.detached(priority: .userInitiated) { [logger, location] in
+                logger.info("Starting background merge...")
 
-                logger.info("Saving merged video...")
-                try await performChange {
-                    let options = PHAssetResourceCreationOptions()
-                    options.shouldMoveFile = true
-                    let creationRequest = PHAssetCreationRequest.forAsset()
-                    creationRequest.addResource(with: .video, fileURL: finalURL, options: options)
-                    creationRequest.location = location
-                    return creationRequest.placeholderForCreatedAsset
+                do {
+                    let videoMerger = VideoMerger()
+                    let finalURL = try await videoMerger.mergeVideosVertically(
+                        topVideoURL: companionURL,      // Front camera at top
+                        bottomVideoURL: movie.url,       // Back camera at bottom
+                        outputURL: mergedURL
+                    )
+
+                    logger.info("Saving merged video to Photos...")
+
+                    // Save the merged video
+                    guard await PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
+                        logger.error("Not authorized to save merged video")
+                        return
+                    }
+
+                    try await PHPhotoLibrary.shared().performChanges {
+                        let options = PHAssetResourceCreationOptions()
+                        options.shouldMoveFile = true
+                        let creationRequest = PHAssetCreationRequest.forAsset()
+                        creationRequest.addResource(with: .video, fileURL: finalURL, options: options)
+                        creationRequest.location = location
+                    }
+
+                    logger.info("✅ Merged video saved! Total: 3 videos (front, back, merged)")
+
+                    // Clean up original temp files
+                    try? FileManager.default.removeItem(at: movie.url)
+                    try? FileManager.default.removeItem(at: companionURL)
+
+                } catch {
+                    logger.error("Background merge failed: \(error.localizedDescription)")
+                    // Individual videos are already saved, so this is not critical
                 }
-
-                logger.info("✅ Saved 3 videos: front, back, and merged")
-
-                // Clean up original files
-                try? FileManager.default.removeItem(at: movie.url)
-                try? FileManager.default.removeItem(at: companionURL)
-
-            } catch {
-                logger.error("Failed to create merged video: \(error.localizedDescription)")
-                // Continue anyway - at least we have the individual videos
             }
+
+            // Return immediately - user doesn't wait for merge!
+            logger.info("✅ Individual videos saved, merge happening in background")
+
         } else {
             // Single camera recording - save normally
             for url in movie.allURLs {

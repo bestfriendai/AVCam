@@ -373,9 +373,23 @@ final class CameraModel: Camera {
             do {
                 // If currently recording, stop the recording and write the movie to the library.
                 let movie = try await captureService.stopRecording()
+
+                // Show feedback based on whether it's multi-cam or not
+                if movie.companionURL != nil {
+                    feedback.info("Saving videos...", duration: 2.0)
+                }
+
                 try await mediaLibrary.save(movie: movie)
+
+                // Show success feedback
+                if movie.companionURL != nil {
+                    feedback.success("Videos saved! Merging in background...", duration: 3.0)
+                } else {
+                    feedback.success("Video saved!", duration: 2.0)
+                }
             } catch {
                 self.error = error
+                feedback.error("Failed to save video", duration: 3.0)
             }
         default:
             // In any other case, start recording.

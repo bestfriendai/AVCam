@@ -133,20 +133,23 @@ actor VideoMerger {
         videoComposition.instructions = [mainInstruction]
         
         // Export the composition
+        // Use 1920x1080 preset for good quality and faster export than HighestQuality
         guard let exportSession = AVAssetExportSession(
             asset: composition,
-            presetName: AVAssetExportPresetHighestQuality
+            presetName: AVAssetExportPreset1920x1080
         ) else {
             logger.error("Failed to create export session")
             throw VideoMergerError.exportFailed
         }
-        
+
         exportSession.outputURL = outputURL
         exportSession.outputFileType = .mov
         exportSession.videoComposition = videoComposition
-        
+        exportSession.shouldOptimizeForNetworkUse = true // Optimize for faster processing
+
         logger.info("Starting export to: \(outputURL.lastPathComponent)")
-        
+        logger.info("Using 1920x1080 preset for optimal speed/quality balance")
+
         await exportSession.export()
         
         switch exportSession.status {
