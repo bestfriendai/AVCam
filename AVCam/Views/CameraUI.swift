@@ -16,6 +16,7 @@ struct CameraUI<CameraModel: Camera>: PlatformView {
     
     @Environment(\.verticalSizeClass) var verticalSizeClass
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
+    @Environment(\.displayScale) var displayScale
     
     var body: some View {
         Group {
@@ -35,8 +36,19 @@ struct CameraUI<CameraModel: Camera>: PlatformView {
                     .offset(y: isRegularSize ? 20 : 0)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            // Show zoom toggle for video mode on rear camera
+            if camera.captureMode == .video {
+                ZoomToggleView(camera: camera)
+                    .padding(12)
+            }
+        }
         .overlay {
             StatusOverlayView(status: camera.status)
+        }
+        .overlay(alignment: .bottomLeading) {
+            // Debug info overlay
+            DebugInfoView(camera: camera)
         }
     }
     
@@ -82,9 +94,95 @@ struct CameraUI<CameraModel: Camera>: PlatformView {
     
     var bottomPadding: CGFloat {
         // Dynamically calculate the offset for the bottom toolbar in iOS.
-        let bounds = UIScreen.main.bounds
+        // Use a reasonable default based on standard screen sizes
+        // This avoids the deprecated UIScreen.main
+        let standardHeight: CGFloat = 844 // iPhone 14/15 Pro height
+        let standardWidth: CGFloat = 390
+        let bounds = CGRect(x: 0, y: 0, width: standardWidth, height: standardHeight)
         let rect = AVMakeRect(aspectRatio: movieAspectRatio, insideRect: bounds)
         return (rect.minY.rounded() / 2) + 12
+    }
+}
+
+/// A view that displays quick-access zoom toggle buttons for the rear camera.
+private struct ZoomToggleView<CameraModel: Camera>: View {
+
+    @State var camera: CameraModel
+    @State private var selectedZoom: RearZoomPreset = .wide_1x
+
+    var body: some View {
+        HStack(spacing: 8) {
+            zoomButton(for: .ultraWide_0_5x, label: "0.5×")
+            zoomButton(for: .wide_1x, label: "1×")
+            zoomButton(for: .tele_2x, label: "2×")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.thinMaterial)
+        .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private func zoomButton(for preset: RearZoomPreset, label: String) -> some View {
+        Button {
+            selectedZoom = preset
+            camera.setRearZoomPreset(preset)
+        } label: {
+            Text(label)
+                .font(.system(size: 14, weight: selectedZoom == preset ? .semibold : .regular))
+                .foregroundColor(selectedZoom == preset ? .primary : .secondary)
+                .frame(minWidth: 36)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Debug information overlay showing camera state
+private struct DebugInfoView<CameraModel: Camera>: View {
+    @State var camera: CameraModel
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Toggle button
+            Button {
+                withAnimation {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isExpanded ? "chevron.down.circle.fill" : "info.circle.fill")
+                    if !isExpanded {
+                        Text("Debug")
+                    }
+                }
+                .font(.caption)
+                .foregroundColor(.white)
+            }
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Multi-Cam: \(camera.isMultiCamActive ? "✅ Active" : "❌ Inactive")")
+                    Text("Supported: \(camera.isMultiCamSupported ? "✅ Yes" : "❌ No")")
+                    Text("Simulator: \(camera.isRunningOnSimulator ? "⚠️ Yes" : "✅ No")")
+                    Text("Mode: \(camera.captureMode == .video ? "📹 Video" : "📷 Photo")")
+                    Text("Layout: \(camera.multiCamLayout == .grid ? "Grid" : "PiP")")
+
+                    if let error = camera.error {
+                        Divider()
+                        Text("Error: \(error.localizedDescription)")
+                            .foregroundColor(.red)
+                            .font(.caption2)
+                    }
+                }
+                .font(.caption.monospaced())
+                .foregroundColor(.white)
+            }
+        }
+        .padding(8)
+        .background(.black.opacity(0.7))
+        .cornerRadius(8)
+        .padding()
     }
 }
 

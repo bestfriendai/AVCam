@@ -22,7 +22,26 @@ protocol Camera: AnyObject, SendableMetatype {
 
     /// The source of video content for a camera preview.
     var previewSource: PreviewSource { get }
-    
+
+    /// An optional configuration describing simultaneous front/back preview feeds.
+    var multiCamPreviewConfiguration: MultiCamPreviewConfiguration? { get }
+
+    /// A Boolean value that indicates whether multi-camera mode is supported on this device.
+    var isMultiCamSupported: Bool { get }
+
+    /// A Boolean value that indicates whether multi-camera mode is currently active.
+    var isMultiCamActive: Bool { get }
+
+    /// The current multi-camera layout when multi-cam is active.
+    var multiCamLayout: MultiCameraConfiguration.MultiCamLayout { get set }
+
+    /// A Boolean value indicating if running on simulator (multi-cam not supported on simulator).
+    var isRunningOnSimulator: Bool { get }
+
+    /// Explicitly enable/disable dual (multi-camera) mode if supported.
+    func enableMultiCam() async -> Bool
+    func disableMultiCam() async
+
     /// Starts the camera capture pipeline.
     func start() async
 
@@ -73,4 +92,14 @@ protocol Camera: AnyObject, SendableMetatype {
     
     /// Synchronize the state of the camera with the persisted values.
     func syncState() async
+
+    /// Sets the rear camera zoom to a specific preset value.
+    func setRearZoomPreset(_ preset: RearZoomPreset)
+}
+
+/// Rear camera zoom presets for quick access to common focal lengths.
+enum RearZoomPreset {
+    case ultraWide_0_5x  // Ultra-wide lens at 0.5x
+    case wide_1x         // Wide lens at 1.0x
+    case tele_2x         // Telephoto lens at 2.0x
 }

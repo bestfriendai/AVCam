@@ -38,11 +38,19 @@ struct CameraPreview: UIViewRepresentable {
     #if targetEnvironment(simulator)
             // The capture APIs require running on a real device. If running
             // in Simulator, display a static image to represent the video feed.
-            let imageView = UIImageView(frame: UIScreen.main.bounds)
+            // Use .zero frame and rely on autoresizing instead of deprecated UIScreen.main
+            let imageView = UIImageView(frame: .zero)
             imageView.image = UIImage(named: "video_mode")
             imageView.contentMode = .scaleAspectFill
             imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            imageView.translatesAutoresizingMaskIntoConstraints = false
             addSubview(imageView)
+            NSLayoutConstraint.activate([
+                imageView.topAnchor.constraint(equalTo: topAnchor),
+                imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+                imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                imageView.trailingAnchor.constraint(equalTo: trailingAnchor)
+            ])
     #endif
         }
         
@@ -63,7 +71,12 @@ struct CameraPreview: UIViewRepresentable {
             // Connects the session with the preview layer, which allows the layer
             // to provide a live view of the captured content.
             Task { @MainActor in
-                previewLayer.session = session
+                // For multi-camera sessions, use setSessionWithNoConnection to avoid conflicts
+                if session is AVCaptureMultiCamSession {
+                    previewLayer.setSessionWithNoConnection(session)
+                } else {
+                    previewLayer.session = session
+                }
             }
         }
     }

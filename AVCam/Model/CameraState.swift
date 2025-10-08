@@ -7,6 +7,7 @@ A structure that provides camera state to share between the app and the extensio
 
 import os
 import Foundation
+import AVFoundation
 
 struct CameraState: Codable {
     
@@ -26,7 +27,27 @@ struct CameraState: Codable {
         didSet { save() }
     }
     
-    var captureMode = CaptureMode.photo {
+    var captureMode = CaptureMode.video {
+        didSet { save() }
+    }
+    
+    var isCinematicVideoEnabled = false {
+        didSet { save() }
+    }
+    
+    var isSpatialVideoEnabled = false {
+        didSet { save() }
+    }
+    
+    var multiCamLayout: MultiCameraConfiguration.MultiCamLayout = .pictureInPicture {
+        didSet { save() }
+    }
+    
+    var cinematicVideoConfiguration: CinematicVideoConfiguration = .default {
+        didSet { save() }
+    }
+    
+    var spatialVideoConfiguration: SpatialVideoConfiguration = .default {
         didSet { save() }
     }
     

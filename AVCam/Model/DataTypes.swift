@@ -5,7 +5,7 @@ Abstract:
 Supporting data types for the app.
 */
 
-import AVFoundation
+@preconcurrency import AVFoundation
 
 // MARK: - Supporting types
 
@@ -89,8 +89,30 @@ struct Photo: Sendable {
 
 /// A structure that contains the uniform type identifier and movie URL.
 struct Movie: Sendable {
-    /// The temporary location of the file on disk.
+    /// The primary temporary location of the file on disk.
     let url: URL
+    /// An optional companion movie when recording multiple simultaneous feeds.
+    let companionURL: URL?
+
+    init(url: URL, companionURL: URL? = nil) {
+        self.url = url
+        self.companionURL = companionURL
+    }
+
+    /// Returns all file URLs associated with this capture.
+    var allURLs: [URL] {
+        if let companionURL {
+            return [url, companionURL]
+        }
+        return [url]
+    }
+}
+
+/// Describes a multi-camera preview configuration that drives dual-camera UI.
+struct MultiCamPreviewConfiguration: @unchecked Sendable {
+    let session: AVCaptureMultiCamSession
+    let primaryPort: AVCaptureInput.Port
+    let secondaryPort: AVCaptureInput.Port
 }
 
 struct PhotoFeatures {
@@ -138,6 +160,123 @@ enum CameraError: Error {
     case addOutputFailed
     case setupFailed
     case deviceChangeFailed
+    case multiCamConfigurationFailed
+    case cinematicVideoNotSupported
+    case spatialVideoNotSupported
+    case insufficientResources
+    case thermalThrottling
+    case externalCameraConnectionFailed
+}
+
+// MARK: - Enhanced Capture Features
+
+/// Performance metrics for monitoring capture quality and system resources.
+struct PerformanceMetrics: Sendable {
+    let frameRate: Double
+    let cpuUsage: Double
+    let memoryUsage: UInt64
+    let thermalState: ProcessInfo.ThermalState
+    let batteryLevel: Float?
+    let timestamp: Date
+    
+    static let unknown = PerformanceMetrics(
+        frameRate: 0.0,
+        cpuUsage: 0.0,
+        memoryUsage: 0,
+        thermalState: .nominal,
+        batteryLevel: nil,
+        timestamp: Date()
+    )
+}
+
+/// Configuration for cinematic video capture.
+struct CinematicVideoConfiguration: Sendable, Codable {
+    let isEnabled: Bool
+    let focusMode: CinematicFocusMode
+    let simulatedAperture: Float
+    
+    enum CinematicFocusMode: String, CaseIterable, Codable {
+        case none = "none"
+        case weak = "weak"
+        case strong = "strong"
+    }
+    
+    static let `default` = CinematicVideoConfiguration(
+        isEnabled: false,
+        focusMode: .strong,
+        simulatedAperture: 2.8
+    )
+}
+
+/// Configuration for spatial video recording.
+struct SpatialVideoConfiguration: Sendable, Codable {
+    let isEnabled: Bool
+    let depthDataEnabled: Bool
+    let multiviewHEVC: Bool
+    
+    static let `default` = SpatialVideoConfiguration(
+        isEnabled: false,
+        depthDataEnabled: true,
+        multiviewHEVC: true
+    )
+}
+
+/// Multi-camera device configuration for advanced setups.
+struct MultiCameraConfiguration: @unchecked Sendable, Codable {
+    let deviceIDs: [String] // Store device IDs instead of actual devices
+    let primaryDeviceID: String
+    let layout: MultiCamLayout
+    let synchronizationEnabled: Bool
+    
+    enum MultiCamLayout: String, CaseIterable, Codable {
+        case pictureInPicture = "pip"
+        case sideBySide = "sidebyside"
+        case grid = "grid"
+        case custom = "custom"
+    }
+    
+    // Runtime properties (not Codable) - excluded from encoding/decoding
+    private var _devices: [AVCaptureDevice] = []
+    private var _primaryDevice: AVCaptureDevice?
+    
+    var devices: [AVCaptureDevice] {
+        get { _devices }
+        set { _devices = newValue }
+    }
+    
+    var primaryDevice: AVCaptureDevice? {
+        get { _primaryDevice }
+        set { _primaryDevice = newValue }
+    }
+    
+    // Custom coding to exclude runtime properties
+    enum CodingKeys: String, CodingKey {
+        case deviceIDs, primaryDeviceID, layout, synchronizationEnabled
+    }
+    
+    // Custom initializer for creating configurations
+    init(deviceIDs: [String], primaryDeviceID: String, layout: MultiCamLayout, synchronizationEnabled: Bool) {
+        self.deviceIDs = deviceIDs
+        self.primaryDeviceID = primaryDeviceID
+        self.layout = layout
+        self.synchronizationEnabled = synchronizationEnabled
+    }
+}
+
+/// Stream information for multi-camera coordination.
+struct VideoStream: @unchecked Sendable {
+    let id: UUID
+    let device: AVCaptureDevice
+    let input: AVCaptureDeviceInput
+    let output: AVCaptureOutput
+    let isActive: Bool
+    let priority: StreamPriority
+    
+    enum StreamPriority: Int, CaseIterable {
+        case low = 0
+        case medium = 1
+        case high = 2
+    }
 }
 
 protocol OutputService {
