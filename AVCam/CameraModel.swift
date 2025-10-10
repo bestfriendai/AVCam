@@ -150,35 +150,75 @@ final class CameraModel: Camera {
     // MARK: - Starting the camera
     /// Start the camera and begin the stream of data.
     func start() async {
+        logger.info("🚀 Starting camera capture pipeline")
+        logger.info("📱 Device Info: iPhone 17 Pro Max should support multi-cam")
+        logger.info("🔍 Multi-cam support check: \(self.isMultiCamSupported)")
+        logger.info("📹 Current capture mode: \(self.captureMode.rawValue)")
+        logger.info("🖥️ Running on simulator: \(self.isRunningOnSimulator)")
+
         // Verify that the person authorizes the app to use device cameras and microphones.
         guard await captureService.isAuthorized else {
+            logger.error("❌ Camera authorization failed")
             status = .unauthorized
             sessionState.setError(.permissionDenied)
             return
         }
+
+        logger.info("✅ Camera authorization granted")
+
         do {
             // Synchronize the state of the model with the persistent state.
             await syncState()
+            logger.info("✅ State synchronized")
+
             // Start the capture service to start the flow of data.
             try await captureService.start(with: cameraState)
             observeState()
             status = .running
+            logger.info("✅ Capture service started successfully")
 
             // Auto-enable dual camera mode if supported and in video mode
             if isMultiCamSupported && captureMode == .video && !isRunningOnSimulator {
-                logger.info("Auto-enabling dual camera mode (default behavior)")
+                logger.info("🎯 CONDITIONS MET: Auto-enabling dual camera mode (default behavior)")
+                logger.info("   ✅ Multi-cam supported: \(self.isMultiCamSupported)")
+                logger.info("   ✅ Capture mode is video: \(self.captureMode == .video)")
+                logger.info("   ✅ Not simulator: \(!self.isRunningOnSimulator)")
                 feedback.info("Initializing dual camera mode...")
 
                 let success = await enableMultiCam()
                 if success {
+                    logger.info("✅ Dual camera mode successfully activated as default")
                     feedback.success("Dual camera mode active", duration: 2.0)
                 } else {
-                    logger.warning("Auto dual-mode failed, using single camera")
+                    logger.warning("❌ Auto dual-mode failed, falling back to single camera")
                     feedback.warning("Using single camera mode", duration: 2.0)
+
+                    // Ensure we're in a valid single camera state
+                    sessionState.transition(to: .singleCamera(
+                        device: CameraSessionState.CameraDevice(
+                            position: .back,
+                            modelID: "Rear",
+                            localizedName: "Rear Camera"
+                        )
+                    ))
                 }
+            } else {
+                logger.info("❌ CONDITIONS NOT MET: Dual camera not auto-enabled")
+                logger.info("   - Multi-cam supported: \(self.isMultiCamSupported)")
+                logger.info("   - Capture mode is video: \(self.captureMode == .video)")
+                logger.info("   - Not simulator: \(!self.isRunningOnSimulator)")
+
+                // Ensure we start in single camera mode
+                sessionState.transition(to: .singleCamera(
+                    device: CameraSessionState.CameraDevice(
+                        position: .back,
+                        modelID: "Rear",
+                        localizedName: "Rear Camera"
+                    )
+                ))
             }
         } catch {
-            logger.error("Failed to start capture service. \(error)")
+            logger.error("❌ Failed to start capture service: \(error)")
             status = .failed
             sessionState.setError(.sessionConfigurationFailed(underlying: error))
         }
@@ -227,7 +267,20 @@ final class CameraModel: Camera {
     /// Explicitly enable dual (multi-camera) mode if supported.
     @MainActor
     func enableMultiCam() async -> Bool {
-        logger.info("User requested dual camera mode")
+        logger.info("🎥 Attempting to enable dual camera mode")
+
+        // Pre-flight checks
+        guard isMultiCamSupported else {
+            logger.error("❌ Multi-camera not supported on this device")
+            feedback.error("Dual camera not supported on this device", duration: 3.0)
+            return false
+        }
+
+        guard !isRunningOnSimulator else {
+            logger.error("❌ Multi-camera not available in simulator")
+            feedback.error("Dual camera not available in simulator", duration: 3.0)
+            return false
+        }
 
         // Show transitioning state
         sessionState.beginTransition(
@@ -251,6 +304,14 @@ final class CameraModel: Camera {
 
         let success = await captureService.enableMultiCam()
         if success {
+            // Verify that multiCamPreviewConfiguration was actually created
+            guard multiCamPreviewConfiguration != nil else {
+                logger.error("❌ Dual camera enabled but preview configuration is nil")
+                sessionState.setError(.multiCamConfigurationFailed)
+                feedback.error("Dual camera configuration failed", duration: 5.0)
+                return false
+            }
+
             // Default to grid layout for multi-cam as per user preference
             multiCamLayout = .grid
             logger.info("✅ Dual camera mode enabled successfully with grid layout")

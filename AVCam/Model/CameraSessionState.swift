@@ -133,6 +133,7 @@ class CameraSessionState {
 /// Errors specific to camera session state management
 enum CameraSessionError: LocalizedError {
     case multiCamNotSupported
+    case multiCamConfigurationFailed
     case deviceNotAvailable(position: AVCaptureDevice.Position)
     case formatIncompatible(primary: String, secondary: String)
     case sessionConfigurationFailed(underlying: Error)
@@ -145,10 +146,12 @@ enum CameraSessionError: LocalizedError {
         switch self {
         case .multiCamNotSupported:
             return "Dual Camera Not Supported"
+        case .multiCamConfigurationFailed:
+            return "Dual Camera Configuration Failed"
         case .deviceNotAvailable(let position):
             return "\(position == .front ? "Front" : "Rear") Camera Unavailable"
-        case .formatIncompatible(let primary, let _):
-            return "Camera Formats Incompatible"
+        case .formatIncompatible(let primary, let secondary):
+            return "Camera Formats Incompatible (\(primary) + \(secondary))"
         case .sessionConfigurationFailed:
             return "Camera Setup Failed"
         case .insufficientResources:
@@ -166,6 +169,8 @@ enum CameraSessionError: LocalizedError {
         switch self {
         case .multiCamNotSupported:
             return "This device doesn't support dual camera mode. Requires iPhone 11 or newer."
+        case .multiCamConfigurationFailed:
+            return "Dual camera setup failed. This may be due to thermal throttling, resource constraints, or incompatible formats. Try again after letting the device cool down."
         case .deviceNotAvailable:
             return "Check camera permissions in Settings and try again."
         case .formatIncompatible(let primary, let secondary):
@@ -187,6 +192,8 @@ enum CameraSessionError: LocalizedError {
         switch self {
         case .multiCamNotSupported:
             return "Device hardware limitation"
+        case .multiCamConfigurationFailed:
+            return "Multi-camera session configuration failed"
         case .deviceNotAvailable:
             return "Camera hardware not accessible"
         case .formatIncompatible:

@@ -43,6 +43,13 @@ struct CameraUI<CameraModel: Camera>: PlatformView {
                     .padding(12)
             }
         }
+        .overlay(alignment: .topLeading) {
+            // Manual dual camera toggle for debugging - positioned on top-left to avoid overlap
+            if camera.captureMode == .video && camera.isMultiCamSupported {
+                DualCameraToggleView(camera: camera)
+                    .padding(12)
+            }
+        }
         .overlay {
             StatusOverlayView(status: camera.status)
         }
@@ -208,6 +215,40 @@ private struct DebugInfoView<CameraModel: Camera>: View {
         .background(.black.opacity(0.7))
         .cornerRadius(8)
         .padding()
+    }
+}
+
+/// A view that provides a manual toggle for dual camera mode for debugging.
+private struct DualCameraToggleView<CameraModel: Camera>: View {
+
+    let camera: CameraModel
+
+    var body: some View {
+        Button(action: {
+            Task {
+                if camera.isMultiCamActive {
+                    await camera.disableMultiCam()
+                } else {
+                    let _ = await camera.enableMultiCam()
+                }
+            }
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: camera.isMultiCamActive ? "video.fill.badge.checkmark" : "video.badge.plus")
+                    .font(.caption)
+                Text(camera.isMultiCamActive ? "Dual" : "Single")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(camera.isMultiCamActive ? Color.green.opacity(0.8) : Color.blue.opacity(0.8))
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

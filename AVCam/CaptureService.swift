@@ -148,23 +148,25 @@ actor CaptureService {
     }
 
     private func setUpMultiCamSession(session: AVCaptureMultiCamSession) throws {
-        logger.info("Starting multi-camera session setup...")
+        logger.info("🎬 Starting multi-camera session setup...")
+        logger.info("📱 Session type: \(type(of: session))")
+        logger.info("🔄 Session is running: \(session.isRunning)")
 
         // DON'T stop the session - reconfigure while running for smoother transition
         // Stopping and restarting causes preview interruption and potential failures
 
         guard let frontCamera = deviceLookup.frontCamera else {
-            logger.error("Front camera not available for multi-cam")
+            logger.error("❌ Front camera not available for multi-cam")
             throw CameraError.videoDeviceUnavailable
         }
-        logger.info("Front camera: \(frontCamera.localizedName)")
+        logger.info("📷 Front camera: \(frontCamera.localizedName) (\(frontCamera.modelID))")
 
         // Get the best available back camera with fallback logic
         guard let primaryCamera = deviceLookup.bestBackCamera else {
-            logger.error("Back camera not available for multi-cam")
+            logger.error("❌ Back camera not available for multi-cam")
             throw CameraError.videoDeviceUnavailable
         }
-        logger.info("Primary camera: \(primaryCamera.localizedName)")
+        logger.info("📷 Primary camera: \(primaryCamera.localizedName) (\(primaryCamera.modelID))")
 
         let defaultMic = try deviceLookup.defaultMic
         logger.info("Microphone: \(defaultMic.localizedName)")
@@ -283,11 +285,19 @@ actor CaptureService {
             let secondaryConnection = AVCaptureConnection(inputPorts: [secondaryVideoPort], output: secondaryMovieCapture.output)
             secondaryConnection.preferredVideoStabilizationMode = secondaryConnection.isVideoStabilizationSupported ? .auto : .off
             guard session.canAddConnection(secondaryConnection) else {
-                logger.error("Cannot add secondary movie connection - THIS IS THE LIKELY FAILURE POINT")
+                logger.error("❌ Cannot add secondary movie connection - CRITICAL FAILURE POINT")
+                logger.error("❌ This usually indicates:")
+                logger.error("   • Device thermal throttling")
+                logger.error("   • Incompatible camera formats")
+                logger.error("   • Resource constraints")
+                logger.error("   • Hardware limitations")
                 throw CameraError.multiCamConfigurationFailed
             }
             session.addConnection(secondaryConnection)
-            logger.info("Secondary movie connection added - MULTI-CAM SUCCESS!")
+            logger.info("✅ Secondary movie connection added - MULTI-CAM SUCCESS!")
+        } else {
+            logger.error("❌ Secondary movie capture is nil - cannot create dual camera recording")
+            throw CameraError.multiCamConfigurationFailed
         }
 
         // Publish the preview configuration for the UI.
@@ -313,62 +323,96 @@ actor CaptureService {
         let primaryFormats = primary.formats.filter { $0.isMultiCamSupported }
         let secondaryFormats = secondary.formats.filter { $0.isMultiCamSupported }
 
+        logger.info("📊 Format analysis:")
+        logger.info("   - Primary device: \(primary.localizedName) (\(primaryFormats.count) multi-cam formats)")
+        logger.info("   - Secondary device: \(secondary.localizedName) (\(secondaryFormats.count) multi-cam formats)")
+
         guard !primaryFormats.isEmpty, !secondaryFormats.isEmpty else {
-            logger.error("Multi-cam formats unavailable. Device: \(primary.modelID) / \(secondary.modelID). This will cause fallback to single camera.")
+            logger.error("❌ Multi-cam formats unavailable. Device: \(primary.modelID) / \(secondary.modelID)")
+            logger.error("   - Primary formats available: \(primary.formats.count)")
+            logger.error("   - Secondary formats available: \(secondary.formats.count)")
             throw CameraError.multiCamConfigurationFailed
         }
 
-        // For multi-camera to work, we need to select lower resolution formats
-        // Apple recommends using 1080p or lower for multi-camera
-        let primaryFormat = primaryFormats
-            .filter { format in
-                let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                // Prefer 1080p or lower for multi-camera compatibility
-                return dimensions.height <= 1920
-            }
-            .sorted(by: preferredFormatComparator)
-            .first ?? primaryFormats.sorted(by: preferredFormatComparator).first!
+        // For multi-camera to work reliably, use conservative format selection
+        // Start with 720p for maximum compatibility, then try 1080p
+        let preferredResolutions: [Int32] = [720, 1080, 1920] // Height values
 
-        let secondaryFormat = secondaryFormats
-            .filter { format in
+        var primaryFormat: AVCaptureDevice.Format?
+        var secondaryFormat: AVCaptureDevice.Format?
+
+        // Try each resolution level until we find compatible formats
+        for maxHeight in preferredResolutions {
+            let primaryCandidates = primaryFormats.filter { format in
                 let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-                // Prefer 1080p or lower for multi-camera compatibility
-                return dimensions.height <= 1920
+                return dimensions.height <= maxHeight
             }
-            .sorted(by: preferredFormatComparator)
-            .first ?? secondaryFormats.sorted(by: preferredFormatComparator).first!
+
+            let secondaryCandidates = secondaryFormats.filter { format in
+                let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                return dimensions.height <= maxHeight
+            }
+
+            if !primaryCandidates.isEmpty && !secondaryCandidates.isEmpty {
+                primaryFormat = primaryCandidates.sorted(by: preferredFormatComparator).first
+                secondaryFormat = secondaryCandidates.sorted(by: preferredFormatComparator).first
+                logger.info("✅ Found compatible formats at max height \(maxHeight)p")
+                break
+            }
+        }
+
+        // Fallback to any available multi-cam format if conservative selection fails
+        if primaryFormat == nil || secondaryFormat == nil {
+            primaryFormat = primaryFormats.sorted(by: preferredFormatComparator).first
+            secondaryFormat = secondaryFormats.sorted(by: preferredFormatComparator).first
+            logger.warning("⚠️ Using fallback format selection")
+        }
+
+        guard let finalPrimaryFormat = primaryFormat,
+              let finalSecondaryFormat = secondaryFormat else {
+            logger.error("❌ Could not select compatible formats")
+            throw CameraError.multiCamConfigurationFailed
+        }
 
         // Configure primary camera
         do {
             try primary.lockForConfiguration()
             defer { primary.unlockForConfiguration() }
 
-            primary.activeFormat = primaryFormat
-            if primaryFormat.videoSupportedFrameRateRanges.first != nil {
+            primary.activeFormat = finalPrimaryFormat
+            if finalPrimaryFormat.videoSupportedFrameRateRanges.first != nil {
                 // Use 30fps for multi-camera to reduce resource usage
                 primary.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
                 primary.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
             }
+            logger.info("✅ Primary camera format configured")
+        } catch {
+            logger.error("❌ Failed to configure primary camera format: \(error)")
+            throw CameraError.multiCamConfigurationFailed
         }
 
-        let primaryDims = CMVideoFormatDescriptionGetDimensions(primaryFormat.formatDescription)
-        logger.info("Primary camera format: \(primaryDims.width)x\(primaryDims.height)")
+        let primaryDims = CMVideoFormatDescriptionGetDimensions(finalPrimaryFormat.formatDescription)
+        logger.info("📷 Primary camera format: \(primaryDims.width)x\(primaryDims.height)")
 
         // Configure secondary camera
         do {
             try secondary.lockForConfiguration()
             defer { secondary.unlockForConfiguration() }
 
-            secondary.activeFormat = secondaryFormat
-            if secondaryFormat.videoSupportedFrameRateRanges.first != nil {
+            secondary.activeFormat = finalSecondaryFormat
+            if finalSecondaryFormat.videoSupportedFrameRateRanges.first != nil {
                 // Use 30fps for multi-camera to reduce resource usage
                 secondary.activeVideoMinFrameDuration = CMTime(value: 1, timescale: 30)
                 secondary.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: 30)
             }
+            logger.info("✅ Secondary camera format configured")
+        } catch {
+            logger.error("❌ Failed to configure secondary camera format: \(error)")
+            throw CameraError.multiCamConfigurationFailed
         }
 
-        let secondaryDims = CMVideoFormatDescriptionGetDimensions(secondaryFormat.formatDescription)
-        logger.info("Secondary camera format: \(secondaryDims.width)x\(secondaryDims.height)")
+        let secondaryDims = CMVideoFormatDescriptionGetDimensions(finalSecondaryFormat.formatDescription)
+        logger.info("📷 Secondary camera format: \(secondaryDims.width)x\(secondaryDims.height)")
     }
 
     private func configureMultiCamFormat(for device: AVCaptureDevice) throws {
@@ -468,13 +512,20 @@ actor CaptureService {
     }
 
     init() {
-        if isMultiCamSupported {
+        logger.info("🏗️ Initializing CaptureService")
+        logger.info("🔍 Multi-cam support check: \(self.isMultiCamSupported)")
+
+        if self.isMultiCamSupported {
             captureSession = AVCaptureMultiCamSession()
+            logger.info("✅ Created AVCaptureMultiCamSession")
         } else {
             captureSession = AVCaptureSession()
+            logger.info("⚠️ Created standard AVCaptureSession (multi-cam not supported)")
         }
+
         // Create a source object to connect the preview view with the capture session.
         previewSource = DefaultPreviewSource(session: captureSession)
+        logger.info("✅ Preview source created")
 
         // Configure AirPods remote capture if available
         // if #available(iOS 18.0, *) {
@@ -532,15 +583,63 @@ actor CaptureService {
     /// Attempts to (re)enable multi-camera capture on demand.
     /// Returns true if the session is configured for dual capture and a preview configuration is published.
     func enableMultiCam() async -> Bool {
-        guard let session = multiCamSession else {
-            logger.info("enableMultiCam: device/session doesn't support multi-cam")
+        logger.info("🎥 enableMultiCam() called")
+
+        // Pre-flight checks
+        guard self.isMultiCamSupported else {
+            logger.error("❌ Device does not support multi-camera: \(AVCaptureMultiCamSession.isMultiCamSupported)")
             return false
         }
+
+        guard let session = multiCamSession else {
+            logger.error("❌ enableMultiCam: device/session doesn't support multi-cam")
+            logger.error("   - captureSession type: \(type(of: self.captureSession))")
+            logger.error("   - isMultiCamSupported: \(self.isMultiCamSupported)")
+            return false
+        }
+
+        // Check device availability
+        guard let frontCamera = deviceLookup.frontCamera,
+              let backCamera = deviceLookup.bestBackCamera else {
+            logger.error("❌ Required cameras not available for multi-cam")
+            logger.error("   - Front camera: \(self.deviceLookup.frontCamera?.localizedName ?? "nil")")
+            logger.error("   - Back camera: \(self.deviceLookup.bestBackCamera?.localizedName ?? "nil")")
+            return false
+        }
+
+        // Check format compatibility before attempting configuration
+        let frontFormats = frontCamera.formats.filter { $0.isMultiCamSupported }
+        let backFormats = backCamera.formats.filter { $0.isMultiCamSupported }
+
+        guard !frontFormats.isEmpty && !backFormats.isEmpty else {
+            logger.error("❌ No multi-cam compatible formats available")
+            logger.error("   - Front camera multi-cam formats: \(frontFormats.count)")
+            logger.error("   - Back camera multi-cam formats: \(backFormats.count)")
+            return false
+        }
+
+        logger.info("✅ Multi-cam session available: \(type(of: session))")
+        logger.info("✅ Front camera: \(frontCamera.localizedName) (\(frontFormats.count) formats)")
+        logger.info("✅ Back camera: \(backCamera.localizedName) (\(backFormats.count) formats)")
+        logger.info("🔄 Attempting to configure multi-camera session...")
+
         do {
             try setUpMultiCamSession(session: session)
-            return multiCamPreviewConfiguration != nil
+
+            let hasPreviewConfig = multiCamPreviewConfiguration != nil
+            if hasPreviewConfig {
+                logger.info("✅ Multi-camera session configured successfully")
+                logger.info("   - Preview configuration created: \(self.multiCamPreviewConfiguration != nil)")
+            } else {
+                logger.error("❌ Multi-camera session setup completed but preview configuration is nil")
+            }
+
+            return hasPreviewConfig
         } catch {
-            logger.error("enableMultiCam failed: \(error.localizedDescription)")
+            logger.error("❌ enableMultiCam failed: \(error.localizedDescription)")
+            if let cameraError = error as? CameraError {
+                logger.error("❌ Camera error details: \(cameraError)")
+            }
             return false
         }
     }

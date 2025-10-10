@@ -86,7 +86,7 @@ actor MediaLibrary {
             // Save individual videos in PARALLEL for speed
             logger.info("Saving front and back camera videos in parallel...")
 
-            async let frontSave: Void = performChange {
+            async let frontSave: () = performChange {
                 let options = PHAssetResourceCreationOptions()
                 options.shouldMoveFile = false // Don't move yet, we need it for merging
                 let creationRequest = PHAssetCreationRequest.forAsset()
@@ -95,7 +95,7 @@ actor MediaLibrary {
                 return creationRequest.placeholderForCreatedAsset
             }
 
-            async let backSave: Void = performChange {
+            async let backSave: () = performChange {
                 let options = PHAssetResourceCreationOptions()
                 options.shouldMoveFile = false // Don't move yet, we need it for merging
                 let creationRequest = PHAssetCreationRequest.forAsset()
@@ -128,7 +128,7 @@ actor MediaLibrary {
                     logger.info("Saving merged video to Photos...")
 
                     // Save the merged video
-                    guard await PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
+                    guard PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
                         logger.error("Not authorized to save merged video")
                         return
                     }

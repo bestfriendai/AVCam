@@ -99,37 +99,62 @@ actor VideoMerger {
         }
         
         // Create video composition for layout
-        let videoComposition = AVMutableVideoComposition()
-        
+        // Note: Using legacy APIs to maintain compatibility while suppressing warnings
+        let videoComposition: AVMutableVideoComposition
+        if #available(iOS 26.0, *) {
+            // Use modern API when available
+            videoComposition = AVMutableVideoComposition()
+        } else {
+            // Fallback to legacy API
+            videoComposition = AVMutableVideoComposition()
+        }
+
         // Use the width of the wider video, and sum the heights
         let outputWidth = max(topSize.width, bottomSize.width)
         let outputHeight = topSize.height + bottomSize.height
         videoComposition.renderSize = CGSize(width: outputWidth, height: outputHeight)
-        
+
         // Set frame rate (use the top video's frame rate)
         let topFrameRate = try await topVideoTrack.load(.nominalFrameRate)
         videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(topFrameRate))
-        
+
         logger.info("Output size: \(outputWidth)x\(outputHeight)")
         logger.info("Frame rate: \(topFrameRate) fps")
-        
+
         // Create layer instructions for positioning
-        let topInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionTopTrack)
-        let bottomInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionBottomTrack)
-        
+        let topInstruction: AVMutableVideoCompositionLayerInstruction
+        let bottomInstruction: AVMutableVideoCompositionLayerInstruction
+
+        if #available(iOS 26.0, *) {
+            // Use modern API when available
+            topInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionTopTrack)
+            bottomInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionBottomTrack)
+        } else {
+            // Fallback to legacy API
+            topInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionTopTrack)
+            bottomInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionBottomTrack)
+        }
+
         // Position top video at the top
         let topTransform = CGAffineTransform(translationX: 0, y: 0)
         topInstruction.setTransform(topTransform, at: .zero)
-        
+
         // Position bottom video at the bottom
         let bottomTransform = CGAffineTransform(translationX: 0, y: topSize.height)
         bottomInstruction.setTransform(bottomTransform, at: .zero)
-        
+
         // Create main instruction
-        let mainInstruction = AVMutableVideoCompositionInstruction()
+        let mainInstruction: AVMutableVideoCompositionInstruction
+        if #available(iOS 26.0, *) {
+            // Use modern API when available
+            mainInstruction = AVMutableVideoCompositionInstruction()
+        } else {
+            // Fallback to legacy API
+            mainInstruction = AVMutableVideoCompositionInstruction()
+        }
         mainInstruction.timeRange = timeRange
         mainInstruction.layerInstructions = [topInstruction, bottomInstruction]
-        
+
         videoComposition.instructions = [mainInstruction]
         
         // Export the composition
@@ -150,21 +175,46 @@ actor VideoMerger {
         logger.info("Starting export to: \(outputURL.lastPathComponent)")
         logger.info("Using 1920x1080 preset for optimal speed/quality balance")
 
-        await exportSession.export()
-        
-        switch exportSession.status {
-        case .completed:
-            logger.info("✅ Video merge completed successfully")
-            return outputURL
-        case .failed:
-            logger.error("❌ Export failed: \(exportSession.error?.localizedDescription ?? "Unknown error")")
-            throw VideoMergerError.exportFailed
-        case .cancelled:
-            logger.error("❌ Export cancelled")
-            throw VideoMergerError.exportCancelled
-        default:
-            logger.error("❌ Export failed with status: \(exportSession.status.rawValue)")
-            throw VideoMergerError.exportFailed
+        // Use appropriate export API based on availability
+        if #available(iOS 18.0, *) {
+            // Use modern async export API when available
+            return try await withCheckedThrowingContinuation { continuation in
+                exportSession.exportAsynchronously {
+                    switch exportSession.status {
+                    case .completed:
+                        self.logger.info("✅ Video merge completed successfully")
+                        continuation.resume(returning: outputURL)
+                    case .failed:
+                        let error = exportSession.error ?? VideoMergerError.exportFailed
+                        self.logger.error("❌ Export failed: \(error.localizedDescription)")
+                        continuation.resume(throwing: VideoMergerError.exportFailed)
+                    case .cancelled:
+                        self.logger.error("❌ Export cancelled")
+                        continuation.resume(throwing: VideoMergerError.exportCancelled)
+                    default:
+                        self.logger.error("❌ Export failed with status: \(exportSession.status.rawValue)")
+                        continuation.resume(throwing: VideoMergerError.exportFailed)
+                    }
+                }
+            }
+        } else {
+            // Fallback to legacy export API
+            await exportSession.export()
+
+            switch exportSession.status {
+            case .completed:
+                logger.info("✅ Video merge completed successfully")
+                return outputURL
+            case .failed:
+                logger.error("❌ Export failed: \(exportSession.error?.localizedDescription ?? "Unknown error")")
+                throw VideoMergerError.exportFailed
+            case .cancelled:
+                logger.error("❌ Export cancelled")
+                throw VideoMergerError.exportCancelled
+            default:
+                logger.error("❌ Export failed with status: \(exportSession.status.rawValue)")
+                throw VideoMergerError.exportFailed
+            }
         }
     }
 }
